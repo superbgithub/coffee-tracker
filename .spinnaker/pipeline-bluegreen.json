@@ -1,0 +1,347 @@
+{
+  "appConfig": {},
+  "application": "coffee-tracker",
+  "name": "Blue/Green Deployment Pipeline",
+  "description": "Blue/Green deployment pipeline for Coffee Tracker application",
+  "expectedArtifacts": [
+    {
+      "defaultArtifact": {
+        "kind": "default.docker",
+        "name": "coffee-tracker-backend",
+        "reference": "${parameters.BACKEND_IMAGE}",
+        "type": "docker/image"
+      },
+      "displayName": "backend-image",
+      "id": "backend-image",
+      "matchArtifact": {
+        "kind": "docker",
+        "name": "coffee-tracker-backend",
+        "type": "docker/image"
+      },
+      "useDefaultArtifact": true,
+      "usePriorArtifact": false
+    },
+    {
+      "defaultArtifact": {
+        "kind": "default.docker",
+        "name": "coffee-tracker-frontend",
+        "reference": "${parameters.FRONTEND_IMAGE}",
+        "type": "docker/image"
+      },
+      "displayName": "frontend-image",
+      "id": "frontend-image",
+      "matchArtifact": {
+        "kind": "docker",
+        "name": "coffee-tracker-frontend",
+        "type": "docker/image"
+      },
+      "useDefaultArtifact": true,
+      "usePriorArtifact": false
+    }
+  ],
+  "keepWaitingPipelines": false,
+  "lastModifiedBy": "github-actions",
+  "limitConcurrent": true,
+  "parameterConfig": [
+    {
+      "default": "",
+      "description": "Backend Docker image with tag",
+      "hasOptions": false,
+      "label": "Backend Image",
+      "name": "BACKEND_IMAGE",
+      "required": true
+    },
+    {
+      "default": "",
+      "description": "Frontend Docker image with tag",
+      "hasOptions": false,
+      "label": "Frontend Image",
+      "name": "FRONTEND_IMAGE",
+      "required": true
+    },
+    {
+      "default": "",
+      "description": "Git commit SHA",
+      "hasOptions": false,
+      "label": "Commit SHA",
+      "name": "COMMIT_SHA",
+      "required": false
+    }
+  ],
+  "stages": [
+    {
+      "name": "Deploy to Green Environment",
+      "refId": "1",
+      "requisiteStageRefIds": [],
+      "type": "deployManifest",
+      "cloudProvider": "aws",
+      "account": "aws-production",
+      "credentials": "aws-production",
+      "cluster": "coffee-tracker-cluster",
+      "comments": "Deploy new version to green environment (inactive)",
+      "manifest": {
+        "kind": "Service",
+        "spec": {
+          "cluster": "coffee-tracker-cluster",
+          "serviceName": "coffee-tracker-green",
+          "desiredCount": 2,
+          "launchType": "FARGATE",
+          "networkConfiguration": {
+            "awsvpcConfiguration": {
+              "subnets": "${#stage('Get Subnets')['context']['subnets']}",
+              "securityGroups": ["${parameters.SECURITY_GROUP_ID}"],
+              "assignPublicIp": "DISABLED"
+            }
+          },
+          "loadBalancers": [
+            {
+              "targetGroupArn": "${parameters.GREEN_TARGET_GROUP_ARN}",
+              "containerName": "backend",
+              "containerPort": 8080
+            }
+          ],
+          "taskDefinition": {
+            "family": "coffee-tracker",
+            "networkMode": "awsvpc",
+            "requiresCompatibilities": ["FARGATE"],
+            "cpu": "512",
+            "memory": "1024",
+            "executionRoleArn": "${parameters.EXECUTION_ROLE_ARN}",
+            "taskRoleArn": "${parameters.TASK_ROLE_ARN}",
+            "containerDefinitions": [
+              {
+                "name": "backend",
+                "image": "${parameters.BACKEND_IMAGE}",
+                "portMappings": [
+                  {
+                    "containerPort": 8080,
+                    "protocol": "tcp"
+                  }
+                ],
+                "environment": [
+                  {
+                    "name": "SPRING_PROFILES_ACTIVE",
+                    "value": "prod"
+                  },
+                  {
+                    "name": "DB_HOST",
+                    "value": "${parameters.DB_HOST}"
+                  }
+                ],
+                "secrets": [
+                  {
+                    "name": "DB_PASSWORD",
+                    "valueFrom": "${parameters.DB_PASSWORD_SECRET_ARN}"
+                  }
+                ],
+                "logConfiguration": {
+                  "logDriver": "awslogs",
+                  "options": {
+                    "awslogs-group": "/ecs/coffee-tracker",
+                    "awslogs-region": "us-east-1",
+                    "awslogs-stream-prefix": "backend"
+                  }
+                },
+                "healthCheck": {
+                  "command": ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"],
+                  "interval": 30,
+                  "timeout": 5,
+                  "retries": 3,
+                  "startPeriod": 60
+                }
+              },
+              {
+                "name": "frontend",
+                "image": "${parameters.FRONTEND_IMAGE}",
+                "portMappings": [
+                  {
+                    "containerPort": 80,
+                    "protocol": "tcp"
+                  }
+                ],
+                "environment": [
+                  {
+                    "name": "REACT_APP_API_URL",
+                    "value": "http://localhost:8080"
+                  }
+                ],
+                "logConfiguration": {
+                  "logDriver": "awslogs",
+                  "options": {
+                    "awslogs-group": "/ecs/coffee-tracker",
+                    "awslogs-region": "us-east-1",
+                    "awslogs-stream-prefix": "frontend"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "Wait for Green Environment Health",
+      "refId": "2",
+      "requisiteStageRefIds": ["1"],
+      "type": "wait",
+      "waitTime": 120,
+      "comments": "Wait for containers to start and pass health checks"
+    },
+    {
+      "name": "Health Check Green Environment",
+      "refId": "3",
+      "requisiteStageRefIds": ["2"],
+      "type": "checkPreconditions",
+      "preconditions": [
+        {
+          "type": "expression",
+          "context": {
+            "expression": "${#stage('Deploy to Green Environment')['status'].toString() == 'SUCCEEDED'}",
+            "failureMessage": "Green deployment failed health checks"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Manual Judgment - Proceed with Traffic Shift?",
+      "refId": "4",
+      "requisiteStageRefIds": ["3"],
+      "type": "manualJudgment",
+      "comments": "Review metrics and logs before shifting traffic",
+      "judgmentInputs": [
+        {
+          "value": "Continue"
+        },
+        {
+          "value": "Rollback"
+        }
+      ],
+      "failPipeline": true,
+      "notifications": [
+        {
+          "address": "devops-team@example.com",
+          "level": "stage",
+          "type": "email",
+          "when": ["stage.starting"]
+        }
+      ]
+    },
+    {
+      "name": "Shift 10% Traffic to Green",
+      "refId": "5",
+      "requisiteStageRefIds": ["4"],
+      "type": "modifyAwsScalingProcess",
+      "action": "upsert",
+      "cloudProvider": "aws",
+      "targetGroupPair": {
+        "blueTargetGroup": "${parameters.BLUE_TARGET_GROUP_ARN}",
+        "greenTargetGroup": "${parameters.GREEN_TARGET_GROUP_ARN}",
+        "listenerArn": "${parameters.ALB_LISTENER_ARN}",
+        "greenTrafficWeight": 10
+      },
+      "comments": "Start canary deployment with 10% traffic"
+    },
+    {
+      "name": "Monitor Green for 5 minutes",
+      "refId": "6",
+      "requisiteStageRefIds": ["5"],
+      "type": "wait",
+      "waitTime": 300,
+      "comments": "Monitor error rates and latency"
+    },
+    {
+      "name": "Check Metrics",
+      "refId": "7",
+      "requisiteStageRefIds": ["6"],
+      "type": "kayentaCanary",
+      "canaryConfig": {
+        "metricsAccountName": "cloudwatch",
+        "storageAccountName": "s3",
+        "scoreThresholds": {
+          "marginal": 75,
+          "pass": 95
+        },
+        "canaryAnalysisIntervalMins": 5,
+        "canaryConfigId": "coffee-tracker-canary-config"
+      }
+    },
+    {
+      "name": "Shift 50% Traffic to Green",
+      "refId": "8",
+      "requisiteStageRefIds": ["7"],
+      "type": "modifyAwsScalingProcess",
+      "action": "upsert",
+      "cloudProvider": "aws",
+      "targetGroupPair": {
+        "blueTargetGroup": "${parameters.BLUE_TARGET_GROUP_ARN}",
+        "greenTargetGroup": "${parameters.GREEN_TARGET_GROUP_ARN}",
+        "listenerArn": "${parameters.ALB_LISTENER_ARN}",
+        "greenTrafficWeight": 50
+      },
+      "comments": "Increase traffic to 50%"
+    },
+    {
+      "name": "Monitor for 10 minutes",
+      "refId": "9",
+      "requisiteStageRefIds": ["8"],
+      "type": "wait",
+      "waitTime": 600
+    },
+    {
+      "name": "Shift 100% Traffic to Green",
+      "refId": "10",
+      "requisiteStageRefIds": ["9"],
+      "type": "modifyAwsScalingProcess",
+      "action": "upsert",
+      "cloudProvider": "aws",
+      "targetGroupPair": {
+        "blueTargetGroup": "${parameters.BLUE_TARGET_GROUP_ARN}",
+        "greenTargetGroup": "${parameters.GREEN_TARGET_GROUP_ARN}",
+        "listenerArn": "${parameters.ALB_LISTENER_ARN}",
+        "greenTrafficWeight": 100
+      },
+      "comments": "Complete traffic shift to green"
+    },
+    {
+      "name": "Swap Blue/Green Labels",
+      "refId": "11",
+      "requisiteStageRefIds": ["10"],
+      "type": "script",
+      "command": "aws",
+      "scriptPath": "scripts/swap-blue-green.sh",
+      "comments": "Green becomes new Blue, old Blue becomes new Green"
+    },
+    {
+      "name": "Terminate Old Blue Environment",
+      "refId": "12",
+      "requisiteStageRefIds": ["11"],
+      "type": "destroyServerGroup",
+      "cloudProvider": "aws",
+      "cluster": "coffee-tracker-cluster",
+      "target": "ancestor_asg_dynamic",
+      "targetCluster": "coffee-tracker-blue"
+    },
+    {
+      "name": "Send Success Notification",
+      "refId": "13",
+      "requisiteStageRefIds": ["12"],
+      "type": "webhook",
+      "url": "${parameters.SNS_WEBHOOK_URL}",
+      "method": "POST",
+      "payload": {
+        "subject": "Coffee Tracker Deployment Successful",
+        "message": "Successfully deployed commit ${parameters.COMMIT_SHA} to production"
+      }
+    }
+  ],
+  "triggers": [
+    {
+      "enabled": true,
+      "type": "webhook",
+      "source": "github-actions",
+      "payloadConstraints": {
+        "application": "coffee-tracker"
+      }
+    }
+  ]
+}

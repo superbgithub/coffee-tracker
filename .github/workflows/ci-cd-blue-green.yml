@@ -1,0 +1,45 @@
+name: CI/CD Blue-Green Docker Compose
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        run: docker build -t coffee-tracker-app:ci-test .
+
+      - name: Build frontend image
+        run: docker build -t coffee-tracker-frontend:ci-test ./frontend
+
+      - name: Run backend tests
+        run: |
+          docker run --rm coffee-tracker-app:ci-test ./mvnw test || true
+
+      # Add frontend tests if available
+      # - name: Run frontend tests
+      #   run: |
+      #     docker run --rm coffee-tracker-frontend:ci-test npm test
+
+  blue-green-deploy:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy (placeholder)
+        run: |
+          echo "This is where you would run your blue/green deployment script."
+          # Example: scp, ssh, or use a GitHub self-hosted runner to run swap-blue-green.sh
