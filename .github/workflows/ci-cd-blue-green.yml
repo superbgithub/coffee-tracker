@@ -32,7 +32,7 @@ jobs:
       #     docker run --rm coffee-tracker-frontend:ci-test npm test
 
       - name: Trivy scan backend image
-        uses: aquasecurity/trivy-action@v0.19.0
+        uses: aquasecurity/trivy-action@main
         with:
           image-ref: 'coffee-tracker-app:ci-test'
           format: 'table'
@@ -40,7 +40,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Trivy scan frontend image
-        uses: aquasecurity/trivy-action@v0.19.0
+        uses: aquasecurity/trivy-action@main
         with:
           image-ref: 'coffee-tracker-frontend:ci-test'
           format: 'table'
