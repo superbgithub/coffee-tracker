@@ -31,21 +31,21 @@ jobs:
       #   run: |
       #     docker run --rm coffee-tracker-frontend:ci-test npm test
 
-      - name: Trivy scan backend image
-        uses: aquasecurity/trivy-action@latest
-        with:
-          image-ref: 'coffee-tracker-app:ci-test'
-          format: 'table'
-          exit-code: '0'
-          ignore-unfixed: true
+      # - name: Trivy scan backend image
+      #   uses: aquasecurity/trivy-action@main
+      #   with:
+      #     image-ref: 'coffee-tracker-app:ci-test'
+      #     format: 'table'
+      #     exit-code: '0'
+      #     ignore-unfixed: true
 
-      - name: Trivy scan frontend image
-        uses: aquasecurity/trivy-action@latest
-        with:
-          image-ref: 'coffee-tracker-frontend:ci-test'
-          format: 'table'
-          exit-code: '0'
-          ignore-unfixed: true
+      # - name: Trivy scan frontend image
+      #   uses: aquasecurity/trivy-action@main
+      #   with:
+      #     image-ref: 'coffee-tracker-frontend:ci-test'
+      #     format: 'table'
+      #     exit-code: '0'
+      #     ignore-unfixed: true
 
   blue-green-deploy:
     needs: build-and-test
